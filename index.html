@@ -357,9 +357,10 @@
     // { text: "...", zurich: true } → Text in Zurich BT, gross und schräg
     const ITEMS = [
       { text: "Ich heisse Olivier, ich bin 24 Jahre alt und komme aus Basel." },
+      { text: "Diesen September habe ich mein Studium in Visueller Kommunikation mit Vertiefung in digitalen Räumen an der HGK in Basel abgeschlossen." },
       { text: "Um mich vorzustellen, habe ich ein paar kleine Fakten zu meiner Person zusammengetragen." },
 
-      { text: "Gestalterisch arbeite ich am liebsten mit" },
+      { text: "Gestalterisch arbeite ich vor allem mit" },
       { reel: ["video/code-1.mp4", "video/code-2.mp4", "video/code-3.mp4"],
         caption: "Code", clip: 3, fade: 0.8, sequence: true, square: true, frame: false },
       { models: [
@@ -390,8 +391,8 @@
 
       { text: "Mein gestalterischer Ansatz ist es, bestehende Konventionen zu hinterfragen" },
       { text: "Und ein Auge offen zu haben für neue Designmöglichkeiten und neue Wege." },
-      { text: "Ich möchte verschiedene Wege, Möglichkeiten und Medien beherrschen," },
-      { text: "um möglichst flexibel auf ein gestalterisches Ziel hinarbeiten zu können." },
+      { text: "Ich möchte mit möglichst vielen Medien und Techniken vertraut sein," },
+      { text: "um flexibel auf ein gestalterisches Ziel hinarbeiten zu können." },
       { text: "Deshalb lerne ich verschiedene Software, binde aber auch analoge Tools wie Zeichnen oder Fotografieren ein." },
       { text: "Gestalterisch inspirieren mich die Stadt, das Internet sowie mein Umfeld und meine Mitmenschen." },
 
@@ -413,13 +414,17 @@
 
     // ---- Einstellungen -----------------------------------------------------
     const SWITCH_DIST = 350; // Pixel Cursorbewegung, bis der Inhalt wechselt
+    const HOLD_AFTER_REVEAL_MS = 500; // Nach dem Ausrollen: so lange zählt Bewegung noch nicht
     const WORD_MS = 60;      // Millisekunden pro Wort beim Ausrollen
 
     // Text Wort für Wort einblenden. Alle Wörter sind von Anfang an im Layout
     // (unsichtbar), damit nichts springt. Wörter zwischen *…* werden in Zurich BT gesetzt.
     let revealTimer = null;
+    let lockedUntil = 0;   // bis dahin wird Cursorbewegung fürs Wechseln ignoriert
     function revealWords(container, text) {
       clearInterval(revealTimer);
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      lockedUntil = performance.now() + wordCount * WORD_MS + HOLD_AFTER_REVEAL_MS;
       container.textContent = "";
       const spans = [];
       let inZbt = false;
@@ -591,8 +596,10 @@
         lastX = x; lastY = y;
         nextContent();
       } else {
-        travelled += Math.hypot(x - lastX, y - lastY);
+        const d = Math.hypot(x - lastX, y - lastY);
         lastX = x; lastY = y;
+        if (performance.now() < lockedUntil) { travelled = 0; }  // Element ist noch nicht fertig sichtbar
+        else travelled += d;
         // beim letzten Element bleiben – keine Wiederholung
         if (travelled >= SWITCH_DIST && idx < ITEMS.length) {
           travelled = 0;
