@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Praktikumsbewerbung Olivier</title>
+  <style>
+    /* Univers = Schrift für alles; Zurich BT nur für das Lieblingsfont-Element */
+    @font-face {
+      font-family: "Univers";
+      src: url("fonts/UniversLTPro-55Roman.otf") format("opentype");
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: "Zurich BT";
+      src: url("fonts/ZurichBT-Regular.ttf") format("truetype");
+      font-weight: 400;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+      color: #000;
+      font-family: "Univers", Helvetica, "Helvetica Neue", Arial, sans-serif;
+      cursor: none;
+    }
+
+    #follower {
+      position: fixed;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+      display: none;
+    }
+
+    #follower.text {
+      font-size: clamp(1.6rem, 3.2vw, 2.8rem);
+      line-height: 1;
+      text-align: left;
+      width: max-content;      /* Breite aus dem Inhalt, unabhängig vom Fensterrand */
+      max-width: 30ch;         /* max. ~30 Zeichen pro Zeile */
+      white-space: pre-wrap;   /* automatischer Umbruch */
+      hyphens: auto;
+      -webkit-hyphens: auto;
+    }
+
+    .zbt { font-family: "Zurich BT", Helvetica, Arial, sans-serif; } /* Wörter zwischen *…* im Text */
+
+    #follower.zurich {
+      font-family: "Zurich BT", Helvetica, Arial, sans-serif;
+      font-size: clamp(3rem, 7vw, 6rem);
+      line-height: 1;
+      white-space: nowrap;
+      transform: rotate(18deg); /* schräg nach unten */
+      transform-origin: top left;
+    }
+
+    /* Bild mit Text darüber */
+    #follower.combo .caption {
+      font-size: clamp(1.6rem, 3.2vw, 2.8rem);
+      line-height: 1;
+      width: max-content;
+      max-width: 30ch;
+      white-space: pre-wrap;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+      margin-bottom: 0.1em;
+    }
+
+    /* Zufalls-Videoschnitt: zwei Videos übereinander, Überblendung per Opacity */
+    #follower.combo .reel {
+      position: relative;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+    #follower.combo .reel video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 0.5s linear;
+    }
+    #follower.combo .reel video.on { opacity: 1; }
+
+    #follower.img,
+    #follower.combo img,
+    #follower.combo .reel,
+    #follower.combo .model {
+      display: block;
+      height: clamp(340px, 50vh, 700px); /* alle Bilder gleich hoch, Breite passt sich an */
+      width: auto;
+      border: 10px solid #ff2fb3;                 /* Fallback (sRGB) */
+      border-color: color(display-p3 1 0.1 0.7); /* Neon-Pink im P3-Farbraum */
+    }
+
+    /* Modell-Canvas. Layout-Box bleibt klein (--h, quadratisch), der Canvas selbst ist
+       grösser und darf überstehen: Faktor --s (Modellfläche) plus unsichtbarer Rand links
+       (--pl) und oben (--pt), damit Modelle über den Textanfang hinausragen können.
+       Die Ausrichtung passiert am Textanfang. Werte müssen zu PAD_L/PAD_T/AREA im JS passen. */
+    #follower.combo .model {
+      --h: clamp(340px, 50vh, 700px);
+      --s: 2.5; --pl: 0.5; --pt: 0.25;
+      height: var(--h);
+      width: var(--h);
+      margin-top: -0.1em;
+      border: none;
+      position: relative;
+    }
+    #follower.combo .model canvas {   /* zwei Canvas übereinander → Überblendung */
+      position: absolute;
+      left: calc(var(--h) * var(--pl) * -1);
+      top:  calc(var(--h) * var(--pt) * -1);
+      width:  calc(var(--h) * (var(--pl) + var(--s))) !important;
+      height: calc(var(--h) * (var(--pt) + var(--s))) !important;
+      opacity: 0;
+      transition: opacity 0.6s linear;
+    }
+    #follower.combo .model canvas.on { opacity: 1; }
+    #follower.combo .caption { position: relative; z-index: 1; } /* Text bleibt über dem Modell */
+
+  </style>
+</head>
+<body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+    // ---- 3D-Modelle (rotierend, wechselnd, überblendend) -------------------
+    // Zwei Renderer/Canvas übereinander: das nächste Modell wird im unsichtbaren
+    // Canvas aufgebaut und dann per Opacity eingeblendet.
+    const MODEL_SIZE = 3.1;   // Standardgrösse (max. Ausdehnung in Welt-Einheiten)
+    const TILTS = [           // Neigungen [x, z], wechseln bei jedem Modellwechsel
+      [0.45, -0.25], [0.15, 0.35], [0.65, 0.05], [0.30, -0.55], [-0.2, 0.2],
+    ];
+    const PAD_L = 0.5, PAD_T = 0.25, AREA = 2.5;         // muss zu den CSS-Werten --pl/--pt/--s passen
+    const CAM_FOV = 35;                                  // Sichtfeld fix → Perspektive bleibt gleich
+    // Kameradistanz so, dass eine Welt-Einheit unabhängig von der Canvas-Grösse gleich
+    // viele Pixel hat (Basis: Distanz 5 auf der Grundfläche --h)
+    const CAM_Z = 5 * (PAD_T + AREA);
+    const CAM_ASPECT = (PAD_L + AREA) / (PAD_T + AREA);
+    const TARGET_LEFT = -1 + 2 * PAD_L / (PAD_L + AREA); // NDC-x des Textanfangs
+    const TARGET_TOP  =  1 - 2 * PAD_T / (PAD_T + AREA); // NDC-y der Textunterkante
+
+    const modelBox = document.createElement("div");
+    modelBox.className = "model";
+    const slots = [0, 1].map(() => {
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+      const key = new THREE.DirectionalLight(0xffffff, 2);
+      key.position.set(3, 4, 5);
+      scene.add(key);
+      const camera = new THREE.PerspectiveCamera(CAM_FOV, CAM_ASPECT, 0.1, 100);
+      camera.position.set(0, 0, CAM_Z);
+      modelBox.appendChild(renderer.domElement);
+      return { renderer, scene, camera, group: null, obj: null };
+    });
+    let activeSlot = 0;
+
+    // Das FBX enthält noch die alten Blender-Pfade der Texturen → nur Dateiname
+    // behalten und aus dem Ordner "textures/" laden
+    const modelManager = new THREE.LoadingManager();
+    modelManager.setURLModifier(url =>
+      /\.(png|jpe?g|tiff?|bmp)$/i.test(url) ? "textures/" + url.split(/[\\/]/).pop() : url
+    );
+
+    const loadedModels = {};   // src → { obj, fits: [{tiltX, tiltZ, camX, camY}, …] }
+
+    // Kamera-Position berechnen, bei der die Silhouette des Modells (über eine ganze
+    // Umdrehung, in gegebener Neigung) oben links im Canvas anliegt.
+    // Drei Durchläufe wegen Perspektive.
+    function fitCamera(obj, tilt) {
+      const group = new THREE.Group();
+      group.rotation.set(tilt[0], 0, tilt[1]);
+      group.add(obj);
+      const cam = new THREE.PerspectiveCamera(CAM_FOV, CAM_ASPECT, 0.1, 100);
+      cam.position.set(0, 0, CAM_Z);
+      cam.lookAt(0, 0, 0);
+      const halfViewY = CAM_Z * Math.tan(THREE.MathUtils.degToRad(CAM_FOV / 2));
+      const halfViewX = halfViewY * CAM_ASPECT;
+      const v = new THREE.Vector3();
+      // Pro Drehwinkel die Silhouetten-Kante bestimmen und über die Umdrehung mitteln:
+      // das Modell liegt im Mittel bündig am Textanfang (mal minimal darüber, mal Lücke),
+      // statt an den meisten Winkeln eine grosse Lücke zu lassen.
+      const STEPS = 36;
+      for (let pass = 0; pass < 3; pass++) {
+        cam.updateMatrixWorld(true);
+        let topSum = 0, leftSum = 0;
+        for (let i = 0; i < STEPS; i++) {
+          obj.rotation.y = (i / STEPS) * Math.PI * 2;
+          group.updateMatrixWorld(true);
+          const b = new THREE.Box3().setFromObject(group);
+          let top = -Infinity, left = Infinity;
+          for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+            v.set(x, y, z).project(cam);
+            top = Math.max(top, v.y); left = Math.min(left, v.x);
+          }
+          topSum += top; leftSum += left;
+        }
+        cam.position.x += (leftSum / STEPS - TARGET_LEFT) * halfViewX;
+        cam.position.y += (topSum / STEPS - TARGET_TOP) * halfViewY;
+        cam.lookAt(cam.position.x, cam.position.y, 0);
+      }
+      obj.rotation.y = 0;
+      group.remove(obj);
+      return { tiltX: tilt[0], tiltZ: tilt[1], camX: cam.position.x, camY: cam.position.y };
+    }
+
+    function loadModel(entry) {
+      const src = typeof entry === "string" ? entry : entry.src;
+      const size = (typeof entry === "string" ? null : entry.size) || MODEL_SIZE;
+      // shift: [rechts, oben] in Welt-Einheiten (Canvas-Breite ≈ 3.2); negativ = links/unten
+      let shift = (typeof entry === "string" ? null : entry.shift) || 0;
+      if (typeof shift === "number") shift = [shift, 0];
+      const isGlb = /\.(glb|gltf)$/i.test(src);
+      // pivot: [x, y, z] verschiebt den Drehpunkt weg von der Geometrie-Mitte (in Welt-Einheiten)
+      const pivotOff = (typeof entry === "string" ? null : entry.pivot) || [0, 0, 0];
+      const onLoaded = root => {
+        const model = isGlb ? root.scene : root;
+        // Glanz entfernen: alle Materialien matt
+        model.traverse(n => {
+          if (!n.isMesh) return;
+          (Array.isArray(n.material) ? n.material : [n.material]).forEach(mat => {
+            if ("shininess" in mat) mat.shininess = 0;               // Phong (FBX)
+            if ("specular" in mat)  mat.specular.setScalar(0);
+            if ("roughness" in mat) mat.roughness = 1;               // Standard/Physical (GLB)
+            if ("metalness" in mat) mat.metalness = 0;
+            if ("clearcoat" in mat) mat.clearcoat = 0;
+            mat.envMap = null;
+            mat.needsUpdate = true;
+          });
+        });
+        // Modell so in einen Pivot hängen, dass der Drehpunkt in der Mitte der
+        // Geometrie liegt (nicht am Blender-Ursprung), und auf einheitliche Grösse skalieren
+        const box = new THREE.Box3().setFromObject(model);
+        const dim = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const scale = size / Math.max(dim.x, dim.y, dim.z);
+        const obj = new THREE.Group();          // = Pivot; um dessen Y-Achse wird gedreht
+        model.position.sub(center).multiplyScalar(scale);
+        model.position.sub(new THREE.Vector3(...pivotOff));
+        model.scale.setScalar(scale);
+        obj.add(model);
+        loadedModels[src] = { obj, fits: TILTS.map(t => fitCamera(obj, t)) };
+        loadedModels[src].fits.forEach(f => { f.camX -= shift[0]; f.camY -= shift[1]; }); // Kamera entgegengesetzt verschieben
+        if (pendingModel === src) showModel(src, false); // war schon dran, bevor es geladen war
+      };
+      const onError = err => console.error("Modell konnte nicht geladen werden:", src, err);
+      if (isGlb) new GLTFLoader(modelManager).load(src, onLoaded, undefined, onError);
+      else       new FBXLoader(modelManager).load(src, onLoaded, undefined, onError);
+    }
+
+    // Modell in den inaktiven Slot stellen, Neigung wechseln, überblenden
+    let modelTimer = null;
+    let tiltIdx = 0;
+    let pendingModel = null;
+    function showModel(src, fade) {
+      const m = loadedModels[src];
+      if (!m) { pendingModel = src; return; }
+      pendingModel = null;
+      const next = slots[1 - activeSlot], prev = slots[activeSlot];
+      if (next.group) next.scene.remove(next.group);
+      const fit = m.fits[tiltIdx % m.fits.length];
+      tiltIdx++;
+      const group = new THREE.Group();
+      group.rotation.set(fit.tiltX, 0, fit.tiltZ);
+      group.add(m.obj);
+      next.scene.add(group);
+      next.group = group; next.obj = m.obj;
+      next.camera.position.set(fit.camX, fit.camY, CAM_Z);
+      next.camera.lookAt(fit.camX, fit.camY, 0);
+      renderSlot(next); // einmal rendern, bevor eingeblendet wird
+      if (!fade) next.renderer.domElement.style.transition = "none";
+      next.renderer.domElement.classList.add("on");
+      prev.renderer.domElement.classList.remove("on");
+      if (!fade) requestAnimationFrame(() => { next.renderer.domElement.style.transition = ""; });
+      activeSlot = 1 - activeSlot;
+    }
+    function startModels(entries, everyMs) {
+      clearInterval(modelTimer);
+      const sources = entries.map(e => typeof e === "string" ? e : e.src);
+      let k = 0;
+      showModel(sources[k], false);
+      if (sources.length > 1) modelTimer = setInterval(() => {
+        k = (k + 1) % sources.length;
+        showModel(sources[k], true);
+      }, everyMs);
+    }
+
+    function renderSlot(slot) {
+      const c = slot.renderer.domElement;
+      const w = c.clientWidth, h = c.clientHeight;
+      if (c.width !== Math.floor(w * window.devicePixelRatio)) {
+        slot.renderer.setSize(w, h, false);
+      }
+      if (slot.obj) slot.obj.rotation.y += 0.004; // Rotation (kleiner = langsamer)
+      slot.renderer.render(slot.scene, slot.camera);
+    }
+    function renderLoop() {
+      requestAnimationFrame(renderLoop);
+      if (!modelBox.isConnected) return;         // nur rendern, wenn sichtbar
+      slots.forEach(renderSlot);
+    }
+    renderLoop();
+
+    // Platzhalter-Bild mit Beschriftung – später durch echte Dateipfade ersetzen
+    function placeholder(label) {
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='800'>
+        <rect width='100%' height='100%' fill='#e5e5e5'/>
+        <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
+              font-family='Helvetica, Arial' font-size='40' fill='#000'>${label}</text>
+      </svg>`;
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    }
+
+    // ---- Inhalte in fester Reihenfolge ------------------------------------
+    // { text: "..." }            → Text (\n = Zeilenumbruch)
+    // { img: "pfad.jpg" }        → Bild
+    // { img: "pfad.jpg", caption: "..." } → Bild mit Text darüber
+    // { models: ["a.fbx", { src: "b.glb", size: 2 }], caption: "...", every: 4000 }
+    //   → rotierende 3D-Modelle, wechseln überblendend alle X ms
+    //     size = Grösse (Standard 3.1), shift = [rechts, oben], pivot = [x, y, z] Drehpunkt-Versatz von der Mitte
+    // { slideshow: ["a.jpg", "b.jpg"], caption: "...", every: 100 } → Bilder wechseln alle X ms endlos durch
+    // { reel: ["a.mp4", "b.mp4"], caption: "...", clip: 3, fade: 0.5 }
+    //   → spielt endlos zufällige 3-Sekunden-Ausschnitte aus zufälligen Videos, mit Überblendung
+    // { text: "...", zurich: true } → Text in Zurich BT, gross und schräg
+    const ITEMS = [
+      { text: "Ich heisse Olivier, ich bin 24 Jahre alt und komme aus Basel." },
+      { text: "Um mich vorzustellen, habe ich ein paar kleine Fakten zu meiner Person zusammengetragen." },
+
+      { text: "Gestalterisch arbeite ich am liebsten mit" },
+      { img: placeholder("Foto: Code"), caption: "Code" },
+      { models: [
+          { src: "zigaretten.fbx", size: 2.4, shift: [-0.2, -0.1] },
+          "warteckd.glb",
+          { src: "tram.glb", size: 4.0, shift: [-1.0, 0.2] },
+        ], caption: "3D-Experimenten", every: 3000 },
+      { reel: ["video/asphalt.mp4", "video/film_olivier.mp4", "video/timeline.mp4"],
+        caption: "und Film.", clip: 3, fade: 0.5 },
+
+      { text: "Abseits vom Bildschirm verbringe ich meine Zeit am liebsten mit" },
+      { img: "IMG_6671.jpg", caption: "Fotografieren" },
+      { img: "IMG_6672.jpg", caption: "Fotografieren" },
+      { img: "IMG_6683.jpg", caption: "Fotografieren" },
+      { slideshow: [
+          "DSC07709.JPG",
+          "DSC07756.JPG",
+          "DSC07827.JPG",
+          "DSC08004.JPG",
+          "DSC08035.JPG",
+          "DSC08129.JPG",
+          "DSC08577.JPG",
+          "DSC08607.JPG",
+          "DSC08645.JPG",
+        ], caption: "(viel Graffiti fotografieren)", every: 100 },
+      { img: "kochen.jpg", caption: "und Kochen." },
+
+      { text: "Mein gestalterischer Ansatz ist es, bestehende Konventionen zu hinterfragen" },
+      { text: "Und ein Auge offen zu haben für neue Designmöglichkeiten und neue Wege." },
+      { text: "Ich möchte verschiedene Wege, Möglichkeiten und Medien beherrschen," },
+      { text: "um möglichst flexibel auf ein gestalterisches Ziel hinarbeiten zu können." },
+      { text: "Deshalb lerne ich verschiedene Software, binde aber auch analoge Tools wie Zeichnen oder Fotografieren ein." },
+      { text: "Gestalterisch inspirieren mich die Stadt, das Internet sowie mein Umfeld und meine Mitmenschen." },
+
+      { text: "Zurzeit inspirieren mich Grafiker und Künstler wie" },
+      { slideshow: ["inspiration/florian-1.jpg", "inspiration/florian-2.jpg", "inspiration/florian-3.jpg"],
+        caption: "Florian Lamm,", every: 500 },
+      { slideshow: ["inspiration/veryes-1.jpg", "inspiration/veryes-2.jpg", "inspiration/veryes-3.jpg"],
+        caption: "Veryes Berlin", every: 500 },
+      { slideshow: ["inspiration/public-1.jpg", "inspiration/public-2.jpg", "inspiration/public-3.jpg"],
+        caption: "und Public Possession.", every: 500 },
+
+      { text: "Mein momentaner Lieblingsfont ist *Zurich BT Regular*." },
+      { text: "Zurich BT", zurich: true },
+
+      { text: "So viel zu mir." },
+      { text: "Ich würde mich sehr freuen, bei euch die Möglichkeit für ein Praktikum zu bekommen!" },
+      { img: "portrait.jpg", caption: "Peace!\nHoffentlich bis bald :-)" },
+    ];
+
+    // ---- Einstellungen -----------------------------------------------------
+    const SWITCH_DIST = 350; // Pixel Cursorbewegung, bis der Inhalt wechselt
+    const WORD_MS = 60;      // Millisekunden pro Wort beim Ausrollen
+
+    // Text Wort für Wort einblenden. Alle Wörter sind von Anfang an im Layout
+    // (unsichtbar), damit nichts springt. Wörter zwischen *…* werden in Zurich BT gesetzt.
+    let revealTimer = null;
+    function revealWords(container, text) {
+      clearInterval(revealTimer);
+      container.textContent = "";
+      const spans = [];
+      let inZbt = false;
+      text.split("\n").forEach((line, li) => {
+        if (li > 0) container.append("\n");
+        line.split(" ").forEach((word, wi) => {
+          if (wi > 0) container.append(" ");
+          if (word.startsWith("*")) { inZbt = true; word = word.slice(1); }
+          const sp = document.createElement("span");
+          if (inZbt) sp.className = "zbt";
+          if (word.includes("*")) { inZbt = false; word = word.replace("*", ""); }
+          sp.textContent = word;
+          sp.style.visibility = "hidden";
+          container.append(sp);
+          spans.push(sp);
+        });
+      });
+      let i = 0;
+      spans[i++].style.visibility = "visible";
+      revealTimer = setInterval(() => {
+        if (i >= spans.length) return clearInterval(revealTimer);
+        spans[i++].style.visibility = "visible";
+      }, WORD_MS);
+    }
+
+    // ---- Logik -------------------------------------------------------------
+    let el = null;
+    let lastX = null, lastY = null;
+    let travelled = 0;
+    let idx = 0;
+
+    // Bilder vorladen
+    ITEMS.forEach(i => {
+      if (i.img)   { const im = new Image(); im.src = i.img; }
+      if (i.slideshow) i.slideshow.forEach(src => { const im = new Image(); im.src = src; });
+      if (i.reel) i.reel.forEach(src => {
+        const v = document.createElement("video");
+        v.preload = "metadata"; v.muted = true; v.src = src;
+        v.addEventListener("loadedmetadata", () => { videoDurations[src] = v.duration; });
+      });
+      if (i.models) i.models.forEach(loadModel);
+    });
+
+    let slideTimer = null;
+    let reelTimer = null;
+    const videoDurations = {};
+
+    // Zufällige Ausschnitte: zwei <video>-Elemente wechseln sich ab, das nächste wird
+    // im Hintergrund an eine zufällige Stelle gespult und dann eingeblendet.
+    function startReel(box, sources, clipSec, fadeSec) {
+      const vids = [document.createElement("video"), document.createElement("video")];
+      vids.forEach(v => { v.muted = true; v.playsInline = true; v.preload = "auto"; box.append(v); });
+      let cur = 0;
+      let lastSrc = null;
+
+      function randomCut() {
+        let src;
+        do { src = sources[Math.floor(Math.random() * sources.length)]; }
+        while (sources.length > 1 && src === lastSrc);
+        lastSrc = src;
+        const dur = videoDurations[src] || 0;
+        const start = Math.max(0, Math.random() * (dur - clipSec));
+        return { src, start };
+      }
+
+      function prepare(v, cut, then) {
+        const go = () => { v.currentTime = cut.start; v.addEventListener("seeked", then, { once: true }); };
+        if (v.getAttribute("src") !== cut.src) {
+          v.src = cut.src;
+          v.addEventListener("loadedmetadata", go, { once: true });
+        } else go();
+      }
+
+      function next() {
+        const nxt = vids[1 - cur], prev = vids[cur];
+        prepare(nxt, randomCut(), () => {
+          nxt.play().catch(() => {});
+          nxt.classList.add("on");
+          prev.classList.remove("on");
+          setTimeout(() => prev.pause(), fadeSec * 1000);
+          cur = 1 - cur;
+          reelTimer = setTimeout(next, (clipSec - fadeSec) * 1000);
+        });
+      }
+
+      // erster Clip ohne Überblendung
+      prepare(vids[0], randomCut(), () => {
+        vids[0].play().catch(() => {});
+        vids[0].classList.add("on");
+        reelTimer = setTimeout(next, (clipSec - fadeSec) * 1000);
+      });
+    }
+
+    function nextContent() {
+      const item = ITEMS[idx++];
+      if (el) el.remove();
+      clearInterval(slideTimer);
+      clearTimeout(reelTimer);
+      clearInterval(modelTimer);
+
+      if (item.reel) {
+        el = document.createElement("div");
+        el.className = "combo";
+        const cap = document.createElement("div");
+        cap.className = "caption";
+        revealWords(cap, item.caption);
+        const box = document.createElement("div");
+        box.className = "reel";
+        el.append(cap, box);
+        startReel(box, item.reel, item.clip || 3, item.fade || 0.5);
+      } else if (item.slideshow) {
+        el = document.createElement("div");
+        el.className = "combo";
+        const cap = document.createElement("div");
+        cap.className = "caption";
+        revealWords(cap, item.caption);
+        const im = document.createElement("img");
+        let k = 0;
+        im.src = item.slideshow[k];
+        slideTimer = setInterval(() => {
+          k = (k + 1) % item.slideshow.length;
+          im.src = item.slideshow[k];
+        }, item.every || 100);
+        el.append(cap, im);
+      } else if (item.models) {
+        el = document.createElement("div");
+        el.className = "combo";
+        const cap = document.createElement("div");
+        cap.className = "caption";
+        revealWords(cap, item.caption);
+        el.append(cap, modelBox);
+        startModels(item.models, item.every || 4000);
+      } else if (item.img && item.caption) {
+        el = document.createElement("div");
+        el.className = "combo";
+        const cap = document.createElement("div");
+        cap.className = "caption";
+        revealWords(cap, item.caption);
+        const im = document.createElement("img");
+        im.src = item.img;
+        el.append(cap, im);
+      } else if (item.img) {
+        el = document.createElement("img");
+        el.src = item.img;
+        el.className = "img";
+      } else {
+        el = document.createElement("div");
+        el.className = item.zurich ? "text zurich" : "text";
+        revealWords(el, item.text);
+      }
+
+      el.id = "follower";
+      el.style.display = "block";
+      document.body.appendChild(el);
+    }
+
+    function onMove(x, y) {
+      if (lastX === null) {
+        lastX = x; lastY = y;
+        nextContent();
+      } else {
+        travelled += Math.hypot(x - lastX, y - lastY);
+        lastX = x; lastY = y;
+        // beim letzten Element bleiben – keine Wiederholung
+        if (travelled >= SWITCH_DIST && idx < ITEMS.length) {
+          travelled = 0;
+          nextContent();
+        }
+      }
+
+      // Obere linke Ecke am Cursor, aber nie über den Fensterrand hinaus
+      const PAD = 16;
+      const r = el.getBoundingClientRect();
+      const cx = Math.min(Math.max(x, PAD), window.innerWidth  - r.width  - PAD);
+      const cy = Math.min(Math.max(y, PAD), window.innerHeight - r.height - PAD);
+
+      el.style.left = cx + "px";
+      el.style.top = cy + "px";
+    }
+
+    // Debug: index.html?item=5 zeigt Element Nr. 5 direkt an (ohne Mausbewegung)
+    const dbg = new URLSearchParams(location.search).get("item");
+    if (dbg !== null) { idx = parseInt(dbg, 10); onMove(120, 120); }
+
+    window.addEventListener("mousemove", e => onMove(e.clientX, e.clientY));
+    window.addEventListener("touchmove", e => {
+      const t = e.touches[0];
+      onMove(t.clientX, t.clientY);
+    }, { passive: true });
+  </script>
+</body>
+</html>

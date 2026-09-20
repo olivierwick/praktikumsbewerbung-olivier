@@ -1,0 +1,19 @@
+# System / Editor
+.DS_Store
+.vscode/
+
+# Rohmaterial – wird von der Seite nicht gebraucht (zu gross für GitHub)
+/zwischen_asphalt_und_beton.mov
+/zwischen_asphalt_und_beton_20-35.mov
+/film_olivier.mp4
+/Timeline 1.mov
+
+# Original-Screenshots (die Seite nutzt die geschnittenen JPGs in inspiration/)
+florian/
+public/
+veryes/
+
+# Nicht verwendete Modelle und Fonts
+basilisk.fbx
+basilisk.glb
+fonts/Ronzino-Medium.otf
