@@ -17,6 +17,12 @@
       font-weight: 400;
     }
 
+    :root {
+      --fs: 44px;      /* Schriftgrösse Texte und Bildunterschriften */
+      --fs-big: 92px;  /* grosses schräges "Zurich BT" */
+      --img-h: 480px;  /* Höhe aller Bilder, Videos und der 3D-Fläche */
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
@@ -37,7 +43,7 @@
     }
 
     #follower.text {
-      font-size: clamp(1.6rem, 3.2vw, 2.8rem);
+      font-size: var(--fs);
       line-height: 1;
       text-align: left;
       width: max-content;      /* Breite aus dem Inhalt, unabhängig vom Fensterrand */
@@ -51,7 +57,7 @@
 
     #follower.zurich {
       font-family: "Zurich BT", Helvetica, Arial, sans-serif;
-      font-size: clamp(3rem, 7vw, 6rem);
+      font-size: var(--fs-big);
       line-height: 1;
       white-space: nowrap;
       transform: rotate(18deg); /* schräg nach unten */
@@ -60,7 +66,7 @@
 
     /* Bild mit Text darüber */
     #follower.combo .caption {
-      font-size: clamp(1.6rem, 3.2vw, 2.8rem);
+      font-size: var(--fs);
       line-height: 1;
       width: max-content;
       max-width: 30ch;
@@ -87,13 +93,20 @@
       transition: opacity 0.5s linear;
     }
     #follower.combo .reel video.on { opacity: 1; }
+    #follower.combo .reel.square {
+      aspect-ratio: 1 / 1;
+      height: calc(var(--img-h) * 1.15);
+      margin-left: calc(var(--img-h) * -0.4);  /* nach links über den Textanfang hinaus */
+      margin-top: calc(var(--img-h) * -0.05);  /* leicht nach oben */
+    }
+    #follower.combo .reel.noframe { border: none; background: transparent; }
 
     #follower.img,
     #follower.combo img,
     #follower.combo .reel,
     #follower.combo .model {
       display: block;
-      height: clamp(340px, 50vh, 700px); /* alle Bilder gleich hoch, Breite passt sich an */
+      height: var(--img-h);              /* alle Bilder gleich hoch, Breite passt sich an */
       width: auto;
       border: 10px solid #ff2fb3;                 /* Fallback (sRGB) */
       border-color: color(display-p3 1 0.1 0.7); /* Neon-Pink im P3-Farbraum */
@@ -104,7 +117,7 @@
        (--pl) und oben (--pt), damit Modelle über den Textanfang hinausragen können.
        Die Ausrichtung passiert am Textanfang. Werte müssen zu PAD_L/PAD_T/AREA im JS passen. */
     #follower.combo .model {
-      --h: clamp(340px, 50vh, 700px);
+      --h: var(--img-h);
       --s: 2.5; --pl: 0.5; --pt: 0.25;
       height: var(--h);
       width: var(--h);
@@ -339,13 +352,16 @@
     // { slideshow: ["a.jpg", "b.jpg"], caption: "...", every: 100 } → Bilder wechseln alle X ms endlos durch
     // { reel: ["a.mp4", "b.mp4"], caption: "...", clip: 3, fade: 0.5 }
     //   → spielt endlos zufällige 3-Sekunden-Ausschnitte aus zufälligen Videos, mit Überblendung
+    //   Optionen: sequence: true (der Reihe nach, jedes Video läuft weiter wo es war),
+    //             square: true (quadratisch), frame: false (ohne pinken Rahmen)
     // { text: "...", zurich: true } → Text in Zurich BT, gross und schräg
     const ITEMS = [
       { text: "Ich heisse Olivier, ich bin 24 Jahre alt und komme aus Basel." },
       { text: "Um mich vorzustellen, habe ich ein paar kleine Fakten zu meiner Person zusammengetragen." },
 
       { text: "Gestalterisch arbeite ich am liebsten mit" },
-      { img: placeholder("Foto: Code"), caption: "Code" },
+      { reel: ["video/code-1.mp4", "video/code-2.mp4", "video/code-3.mp4"],
+        caption: "Code", clip: 3, fade: 0.8, sequence: true, square: true, frame: false },
       { models: [
           { src: "zigaretten.fbx", size: 2.4, shift: [-0.2, -0.1] },
           "warteckd.glb",
@@ -368,6 +384,7 @@
           "DSC08577.JPG",
           "DSC08607.JPG",
           "DSC08645.JPG",
+          "IMG_1017.JPG",
         ], caption: "(viel Graffiti fotografieren)", every: 100 },
       { img: "kochen.jpg", caption: "und Kochen." },
 
@@ -452,14 +469,24 @@
 
     // Zufällige Ausschnitte: zwei <video>-Elemente wechseln sich ab, das nächste wird
     // im Hintergrund an eine zufällige Stelle gespult und dann eingeblendet.
-    function startReel(box, sources, clipSec, fadeSec) {
+    function startReel(box, sources, clipSec, fadeSec, sequence) {
       const vids = [document.createElement("video"), document.createElement("video")];
       vids.forEach(v => { v.muted = true; v.playsInline = true; v.preload = "auto"; box.append(v); });
       let cur = 0;
       let lastSrc = null;
+      let seqIdx = 0;
+      const resumeAt = {};   // sequence-Modus: wo jedes Video weiterläuft
 
       function randomCut() {
         let src;
+        if (sequence) {
+          src = sources[seqIdx++ % sources.length];
+          const dur = videoDurations[src] || 0;
+          let start = resumeAt[src] || 0;
+          if (start + clipSec > dur) start = 0;          // am Ende wieder von vorn
+          resumeAt[src] = start + clipSec - fadeSec;
+          return { src, start };
+        }
         do { src = sources[Math.floor(Math.random() * sources.length)]; }
         while (sources.length > 1 && src === lastSrc);
         lastSrc = src;
@@ -510,9 +537,9 @@
         cap.className = "caption";
         revealWords(cap, item.caption);
         const box = document.createElement("div");
-        box.className = "reel";
+        box.className = "reel" + (item.square ? " square" : "") + (item.frame === false ? " noframe" : "");
         el.append(cap, box);
-        startReel(box, item.reel, item.clip || 3, item.fade || 0.5);
+        startReel(box, item.reel, item.clip || 3, item.fade || 0.5, !!item.sequence);
       } else if (item.slideshow) {
         el = document.createElement("div");
         el.className = "combo";
